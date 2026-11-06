@@ -1,0 +1,109 @@
+// BountyPilot data model. Mirrors lib/types.ts (the team contract).
+//
+// Portability notes (SQLite now, Postgres when we host):
+//  - Money is stored as integer cents (no Decimal, no float rounding). lib/db.ts
+//    converts to/from the dollars used in lib/types.ts.
+//  - String-union fields (status, outcome, decidedBy) are plain Strings, validated in lib/db.ts.
+//  - unmetCriteria / injectionFlags are JSON-encoded strings, so we avoid the Json type.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../lib/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+}
+
+model Bounty {
+  id          String   @id @default(cuid())
+  repo        String
+  issueNumber Int
+  title       String
+  amountCents Int
+  criteria    String
+  status      String   @default("awaiting_funding") // BountyStatus; 'open' means funded
+  fundingOrderId   String? // PayPal order that funds the bounty
+  fundingCaptureId String? // PayPal capture of that order
+  createdAt   DateTime @default(now())
+
+  claim     Claim?
+  verdicts  Verdict[]
+  decisions Decision[]
+  payouts   Payout[]
+
+  @@unique([repo, issueNumber])
+}
+
+model Claim {
+  id          String   @id @default(cuid())
+  bountyId    String   @unique // one claim per bounty
+  githubUser  String
+  paypalEmail String
+  createdAt   DateTime @default(now())
+
+  bounty Bounty @relation(fields: [bountyId], references: [id])
+}
+
+model Verdict {
+  id                 String   @id @default(cuid())
+  bountyId           String
+  prNumber           Int
+  prUrl              String
+  prAuthor           String
+  ciPassed           Boolean
+  mergedByMaintainer Boolean
+  meetsCriteria      Boolean
+  confidence         Float // 0..1
+  unmetCriteria      String // JSON-encoded string[]
+  summary            String
+  injectionFlags     String // JSON-encoded string[]
+  model              String
+  createdAt          DateTime @default(now())
+
+  bounty    Bounty     @relation(fields: [bountyId], references: [id])
+  decisions Decision[]
+
+  @@index([bountyId])
+}
+
+model Decision {
+  id        String   @id @default(cuid())
+  bountyId  String
+  verdictId String
+  outcome   String // DecisionOutcome: auto_pay | needs_approval | blocked
+  ruleFired String
+  decidedBy String // 'policy' | 'maintainer'
+  createdAt DateTime @default(now())
+
+  bounty  Bounty  @relation(fields: [bountyId], references: [id])
+  verdict Verdict @relation(fields: [verdictId], references: [id])
+
+  @@index([bountyId])
+  @@index([verdictId])
+}
+
+model Payout {
+  id             String   @id @default(cuid())
+  bountyId       String
+  senderBatchId  String   @unique
+  payoutBatchId  String?
+  amountCents    Int
+  status         String // mirrors PayPal's transaction_status
+  receiverMasked String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  bounty Bounty @relation(fields: [bountyId], references: [id])
+
+  @@index([bountyId])
+}
+
+// Single row with id "default".
+model Settings {
+  id                       String  @id @default("default")
+  autoPayCapCents          Int
+  contributorDailyCapCents Int
+  monthlyBudgetCents       Int
+  paused                   Boolean @default(false)
+}
