@@ -19,20 +19,36 @@ const {
   PAYPAL_ENVIRONMENT,
 } = process.env;
 
+// --- Exit handling ----------------------------------------------------------
+// This script never calls process.exit(): on Windows it can crash with a libuv
+// "Assertion failed" while handles are still closing. Instead it sets
+// process.exitCode and lets Node exit on its own.
+
+// Thrown after an API error has already been printed, so main() can stop
+// without printing it a second time.
+class HandledError extends Error {}
+
 // --- Guards -----------------------------------------------------------------
 
-if (PAYPAL_ENVIRONMENT && PAYPAL_ENVIRONMENT.trim().toUpperCase() !== 'SANDBOX') {
-  console.error('Refusing to run: PAYPAL_ENVIRONMENT must be SANDBOX (or unset).');
-  process.exit(1);
-}
+// Returns true when it is safe to continue. On failure it sets process.exitCode.
+function checkEnvironment() {
+  if (PAYPAL_ENVIRONMENT && PAYPAL_ENVIRONMENT.trim().toUpperCase() !== 'SANDBOX') {
+    console.error('Refusing to run: PAYPAL_ENVIRONMENT must be SANDBOX (or unset).');
+    process.exitCode = 1;
+    return false;
+  }
 
-const missing = ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'PAYPAL_TEST_RECEIVER'].filter(
-  (name) => !process.env[name],
-);
-if (missing.length > 0) {
-  console.error(`Missing environment variables: ${missing.join(', ')}`);
-  console.error('Fill them in .env.local (see .env.example).');
-  process.exit(1);
+  const missing = ['PAYPAL_CLIENT_ID', 'PAYPAL_CLIENT_SECRET', 'PAYPAL_TEST_RECEIVER'].filter(
+    (name) => !process.env[name],
+  );
+  if (missing.length > 0) {
+    console.error(`Missing environment variables: ${missing.join(', ')}`);
+    console.error('Fill them in .env.local (see .env.example).');
+    process.exitCode = 1;
+    return false;
+  }
+
+  return true;
 }
 
 // --- Helpers ----------------------------------------------------------------
@@ -46,7 +62,8 @@ function maskEmail(email = '') {
   return `${local.slice(0, keep)}***@${domain}`;
 }
 
-// Print PayPal's error in a readable form, add a hint, and stop.
+// Print PayPal's error in a readable form and add a hint. Throws HandledError so
+// the caller stops; main() turns that into a non-zero exit code.
 function fail(res, data) {
   console.error(`\nPayPal returned HTTP ${res.status}`);
   // REST errors use name/message/debug_id; the OAuth endpoint uses error/error_description.
@@ -60,10 +77,10 @@ function fail(res, data) {
   } else if (res.status === 403 || /AUTHORIZATION/i.test(String(data.name))) {
     console.error('\nHint: Payouts may not be enabled for this sandbox app. Check the app\'s features in the PayPal dashboard.');
   }
-  process.exit(1);
+  throw new HandledError(`PayPal returned HTTP ${res.status}`);
 }
 
-// Call the sandbox API. Exits with a readable message on any non-2xx response.
+// Call the sandbox API. On any non-2xx response it prints a readable error and throws HandledError.
 async function paypal(method, path, { headers = {}, body } = {}) {
   const res = await fetch(`${BASE_URL}${path}`, { method, headers, body });
   const text = await res.text();
@@ -92,6 +109,8 @@ async function getAccessToken() {
 }
 
 async function main() {
+  if (!checkEnvironment()) return;
+
   const token = await getAccessToken();
   console.log('Authenticated with the PayPal sandbox.');
 
@@ -165,11 +184,11 @@ async function main() {
     console.log('\nSuccess. Log in to https://sandbox.paypal.com with the sandbox personal account to see the $1.00.');
   } else {
     console.error('\nThe payout was created but has not settled as SUCCESS (see statuses above).');
-    process.exit(1);
+    process.exitCode = 1;
   }
 }
 
 main().catch((err) => {
-  console.error(`Unexpected error: ${err.message}`);
-  process.exit(1);
+  if (!(err instanceof HandledError)) console.error(`Unexpected error: ${err.message}`);
+  process.exitCode = 1;
 });
