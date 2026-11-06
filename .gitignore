@@ -1,0 +1,22 @@
+# Dependencies
+node_modules/
+
+# Build output
+.next/
+out/
+dist/
+coverage/
+*.tsbuildinfo
+
+# Logs
+*.log
+
+# OS files
+.DS_Store
+
+# Deployment
+.vercel/
+
+# Environment files (real secrets). Only .env.example is committed.
+.env*
+!.env.example
