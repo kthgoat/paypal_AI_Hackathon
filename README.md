@@ -139,6 +139,58 @@ The **Treasurer agent remains to be connected** to the team's selected model and
 Agent Framework. There is no simulated AI chat or browser-exposed LLM key in this first slice.
 AG Studio layouts currently reset when the view is reopened; saved reports are future work.
 
+## GitHub webhook (Arif)
+
+`POST /api/github/webhook` verifies the original request bytes using GitHub's
+`X-Hub-Signature-256` header, acknowledges webhook pings, and records only
+`pull_request` events with `action: closed` and `merged: true`.
+Signature handling follows [GitHub's validation guide](https://docs.github.com/en/webhooks/using-webhooks/validating-webhook-deliveries).
+
+Verified merges are saved in `GitHubMergeEvent`, independently of the bounty ledger.
+Both delivery IDs and `(repo, PR number, merge commit)` are unique, so duplicate
+deliveries and replays do not insert additional work, even after a restart.
+This is the reception milestone: no GitHub data fetching, AI review, or payout is
+triggered yet. These events do not appear in the dashboard.
+
+### Local test
+
+1. Apply the new migration and regenerate the client:
+   ```bash
+   npx prisma migrate dev
+   npx prisma generate
+   ```
+2. Generate a random secret locally:
+   ```bash
+   node -e "console.log(require('node:crypto').randomBytes(32).toString('hex'))"
+   ```
+   Put that value in `GITHUB_WEBHOOK_SECRET` in `.env.local`. This is a separate
+   secret you choose, not your GitHub token or PayPal secret.
+3. Start (or restart) `npm run dev` so it loads the secret.
+4. In another terminal, send a signed synthetic event:
+   ```bash
+   node --env-file=.env.local scripts/smoke-github-webhook.mjs
+   ```
+   First run: `HTTP 201` with `status: received`. Repeat: `HTTP 200` with
+   `status: duplicate`. The app terminal also logs the first received merge.
+   The script writes one clearly named test record (`bountypilot/webhook-test`)
+   to the local inbox; it does not call GitHub or PayPal.
+
+### Connect the demo GitHub repo
+
+Once you have a public HTTPS development URL forwarding to your local server,
+add a webhook under the demo repository's **Settings → Webhooks**:
+
+- Payload URL: `https://YOUR-DEVELOPMENT-HOST/api/github/webhook`
+- Content type: `application/json`
+- Secret: the same `GITHUB_WEBHOOK_SECRET` from `.env.local`
+- Events: choose individual events and select **Pull requests**
+- Keep SSL verification enabled and the webhook active.
+
+The initial ping should return `200` with `status: pong`. Merge a test PR and
+inspect **Recent Deliveries**: the first merged event should return `201` with
+`status: received`. Redelivering it should return `200` with `status: duplicate`.
+Creating or closing an unmerged PR returns `200` with `status: ignored`.
+
 ## Team
 
 | Name | Role |

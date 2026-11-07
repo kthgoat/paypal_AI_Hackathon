@@ -107,3 +107,17 @@ model Settings {
   monthlyBudgetCents       Int
   paused                   Boolean @default(false)
 }
+
+// Verified merged-PR inbox. Receiving an event does not authorize a payout.
+model GitHubMergeEvent {
+  deliveryId String   @id
+  repo       String
+  prNumber   Int
+  prUrl      String
+  prAuthor   String
+  mergeSha   String
+  receivedAt DateTime @default(now())
+
+  // Also deduplicate a replay sent with a different delivery header.
+  @@unique([repo, prNumber, mergeSha])
+}
