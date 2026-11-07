@@ -105,6 +105,40 @@ If the item status shows `UNCLAIMED`, `PAYPAL_TEST_RECEIVER` isn't a sandbox acc
 
 ---
 
+## Dashboard (Moe)
+
+Open `/dashboard` after starting the app. It starts with **clearly labelled sample data**
+and works without PayPal credentials, a database, or an AI API key. This is the first
+dashboard deliverable from the build plan: AG Studio rendering a sample ledger.
+
+- Overview: monthly successful spend, pending approvals, remaining budget, active bounties.
+- Approval queue: reviewer summary, acceptance criteria, CI and merge checks, confidence,
+  policy rule, and visible injection flags. The demo holds flagged PRs and failed checks.
+- Demo approval queues a simulated `PENDING` payout; it never calls PayPal or marks money as paid.
+- Demo pause/resume holds approvals. Reset demo restores the fixtures; all demo actions are in memory.
+- Ledger: search, status filter, verdict details, and CSV export.
+- AG Studio: editable ledger grid, successful payouts per contributor chart, and a registered
+  custom approval-queue widget. Use `NEXT_PUBLIC_AG_STUDIO_LICENSE_KEY` for the trial licence.
+  Without a key, development uses AG Studio's unlicensed mode and may show its watermark.
+- Audit log and guardrails: decisions, rule reasons, and the project's configured limits.
+
+### Backend handoff
+
+**Connect ledger** reads `GET /api/dashboard`, which takes a read-only database snapshot,
+uses the existing `lib/db.ts` mappers, and returns `DashboardSnapshot` from `lib/dashboard.ts`.
+Run the migrations and seed first. A connection failure is shown explicitly; sample data
+is never silently presented as live data. Claim PayPal emails are excluded from the response;
+only the already-masked payout recipient is exposed.
+
+Live approval and pause controls are disabled until Kendrick's authenticated mutation
+endpoints are available. The backend must recheck CI, merge, recipient, policy caps,
+pause state, and idempotency; client-side checks are only presentation safeguards.
+An approval response must not be treated as proof of a successful PayPal payment.
+
+The **Treasurer agent remains to be connected** to the team's selected model and AG Studio
+Agent Framework. There is no simulated AI chat or browser-exposed LLM key in this first slice.
+AG Studio layouts currently reset when the view is reopened; saved reports are future work.
+
 ## Team
 
 | Name | Role |
