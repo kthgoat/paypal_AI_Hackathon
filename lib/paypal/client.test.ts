@@ -175,6 +175,30 @@ describe("paypalFetch", () => {
     expect(e.details[0].issue).toBe("ORDER_ALREADY_CAPTURED");
   });
 
+  it("keeps the links PayPal puts in an error body (e.g. a link to the original payout)", async () => {
+    fetchMock.mockResolvedValueOnce(tokenResponse()).mockResolvedValueOnce(
+      json(
+        {
+          name: "USER_BUSINESS_ERROR",
+          message: "duplicate",
+          links: [
+            { href: "https://api-m.sandbox.paypal.com/v1/payments/payouts/BATCH1", rel: "self" },
+            { nothref: true },
+          ],
+        },
+        400,
+      ),
+    );
+
+    const error = await paypalFetch("/v1/payments/payouts", { method: "POST", body: {} }).catch(
+      (e: unknown) => e,
+    );
+
+    expect((error as PayPalError).links).toEqual([
+      { href: "https://api-m.sandbox.paypal.com/v1/payments/payouts/BATCH1", rel: "self" },
+    ]);
+  });
+
   it("parses the OAuth error shape and tolerates non-JSON bodies", async () => {
     fetchMock.mockResolvedValueOnce(
       json({ error: "invalid_client", error_description: "Client Authentication failed" }, 401),
