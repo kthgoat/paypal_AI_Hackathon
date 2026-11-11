@@ -17,6 +17,7 @@ import {
   Download,
   ExternalLink,
   GitBranch,
+  GitMerge,
   LayoutDashboard,
   ListChecks,
   LoaderCircle,
@@ -44,7 +45,15 @@ import {
   type LedgerRow,
 } from "@/lib/dashboard";
 import ApprovalQueue from "./approval-queue";
-import { connectMaintainer, decideBounty, pausePayouts, readDashboard, refreshPayout } from "@/lib/dashboard-client";
+import {
+  connectMaintainer,
+  decideBounty,
+  describeSync,
+  pausePayouts,
+  processMergedPrs,
+  readDashboard,
+  refreshPayout,
+} from "@/lib/dashboard-client";
 
 const AnalyticsStudio = dynamic(() => import("./analytics-studio"), {
   ssr: false,
@@ -312,6 +321,33 @@ export default function Dashboard() {
     }
   }
 
+  // Reviews and decides every merged PR that is waiting (and pays only what policy auto-approves),
+  // so a demo never depends on webhook timing. Can take a while: the review is an AI call.
+  async function syncMergedPrs() {
+    if (actionLock.current || loading || demo) return;
+    if (!maintainerReady) {
+      setError("Connect the ledger to enable maintainer controls.");
+      return;
+    }
+    actionLock.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await connectMaintainer();
+      const { processed } = await processMergedPrs();
+      setData(await readDashboard());
+      setNotice(describeSync(processed));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not sync merged PRs.");
+      // reload after errors too: some events may have been processed before the failure
+      try { setData(await readDashboard()); } catch { /* keep the last snapshot */ }
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
+
   function exportLedger() {
     // block spreadsheet formulas in csv exports
     const cell = (value: string | number) =>
@@ -517,6 +553,8 @@ export default function Dashboard() {
               </span>
               <button className="bp-button bp-button-white" disabled={busy || loading}
                 onClick={refreshPayments}><RefreshCw size={14} /> Check payout status</button>
+              <button className="bp-button bp-button-white" disabled={busy || loading || !maintainerReady}
+                onClick={syncMergedPrs}><GitMerge size={14} /> Sync merged PRs</button>
               <p>Approve sends a PayPal payout; reject creates no payout.</p>
             </div>
           )}

@@ -5,7 +5,8 @@
 //
 //   npx tsx scripts/dev-orchestrate.ts context <owner/repo> <pr>     read the PR from GitHub and print what we learn (changes nothing)
 //   npx tsx scripts/dev-orchestrate.ts prepare <owner/repo> <pr> [--amount=25] [--criteria="- a\n- b"]
-//                                                                  create the dev bounty for the PR's "Closes #N" issue (awaiting_funding)
+//                                                                  create the dev bounty for the PR's "Closes #N" issue (awaiting_funding),
+//                                                                  titled with that GitHub issue's title (re-running refreshes the title)
 //                                                                  and a claim for the PR author, paid to PAYPAL_TEST_RECEIVER
 //   npx tsx scripts/dev-orchestrate.ts event <owner/repo> <pr>       store one GitHubMergeEvent for the real PR (what the webhook would store)
 //   npx tsx scripts/dev-orchestrate.ts process <owner/repo> <pr>     run processMergeEvent on that event and print the result
@@ -19,6 +20,26 @@ export {};
 
 const [command = "show", repoArg, prArg, ...rest] = process.argv.slice(2);
 const flag = (name: string) => rest.find((a) => a.startsWith(`--${name}=`))?.slice(name.length + 3);
+
+/** The issue's title from GitHub, using GITHUB_TOKEN (sent only in the Authorization header, never printed). */
+async function fetchIssueTitle(repo: string, issueNumber: number): Promise<string> {
+  const token = process.env.GITHUB_TOKEN?.trim();
+  if (!token) throw new Error("GITHUB_TOKEN is not set");
+  if (!/^[\w.-]+\/[\w.-]+$/.test(repo)) throw new Error("Invalid repository name");
+  const response = await fetch(`https://api.github.com/repos/${repo}/issues/${issueNumber}`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+      Accept: "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "bountypilot",
+    },
+    signal: AbortSignal.timeout(15_000),
+  });
+  if (!response.ok) throw new Error(`GitHub GET /repos/${repo}/issues/${issueNumber} failed with ${response.status}`);
+  const title = (((await response.json()) as { title?: unknown }).title ?? "").toString().replace(/\s+/g, " ").trim().slice(0, 200);
+  if (!title) throw new Error(`Issue ${repo}#${issueNumber} has no title`);
+  return title;
+}
 
 async function main() {
   if (!["context", "prepare", "event", "process", "show"].includes(command) || !repoArg || !prArg) {
@@ -76,24 +97,26 @@ async function main() {
 
       // The Windows npx shim drops everything after a newline in an argument, so accept a literal \n instead.
       const criteria = flag("criteria")?.split("\\n").join("\n");
+      const title = await fetchIssueTitle(repo, issueNumber); // the issue's own title, not a made-up one
       const bounty = await prisma.bounty.upsert({
         where: { repo_issueNumber: { repo, issueNumber } },
         create: {
           repo,
           issueNumber,
-          title: `Dev bounty for ${repo}#${issueNumber}`,
+          title,
           amountCents: usdToCents(amount),
           criteria: criteria ?? "- The change resolves the linked issue\n- The change includes working code",
           status: "awaiting_funding",
         },
-        update: criteria ? { criteria } : {}, // dev bounty only; it is not funded yet when this is used
+        // Re-running refreshes the title from GitHub. Criteria change only with --criteria (dev bounty only).
+        update: criteria ? { title, criteria } : { title },
       });
       await prisma.claim.upsert({
         where: { bountyId: bounty.id },
         create: { bountyId: bounty.id, githubUser: ctx.author, paypalEmail: receiver },
         update: {},
       });
-      console.log(`bounty ${bounty.id}: ${repo}#${issueNumber} $${(bounty.amountCents / 100).toFixed(2)} status=${bounty.status}`);
+      console.log(`bounty ${bounty.id}: ${repo}#${issueNumber} ${JSON.stringify(bounty.title)} $${(bounty.amountCents / 100).toFixed(2)} status=${bounty.status}`);
       console.log(`criteria:\n${bounty.criteria}`);
       console.log(`claim: ${ctx.author} (paid to PAYPAL_TEST_RECEIVER)`);
       return;
