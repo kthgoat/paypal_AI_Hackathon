@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import Link from "next/link";
 import {
@@ -44,6 +44,7 @@ import {
   type LedgerRow,
 } from "@/lib/dashboard";
 import ApprovalQueue from "./approval-queue";
+import { connectMaintainer, decideBounty, pausePayouts, readDashboard, refreshPayout } from "@/lib/dashboard-client";
 
 const AnalyticsStudio = dynamic(() => import("./analytics-studio"), {
   ssr: false,
@@ -74,6 +75,9 @@ export default function Dashboard() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  const [maintainerReady, setMaintainerReady] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const actionLock = useRef(false);
   const [selected, setSelected] = useState<string | null>(null);
   const [mobileMenu, setMobileMenu] = useState(false);
   const rows = useMemo(() => ledgerRows(data), [data]);
@@ -87,6 +91,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!selected) return;
     const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     document.getElementById("bp-dialog-close")?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelected(null);
@@ -111,25 +117,44 @@ export default function Dashboard() {
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
       previous?.focus();
     };
   }, [selected]);
 
+  useEffect(() => {
+    if (!mobileMenu) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileMenu(false);
+        document.getElementById("bp-menu-toggle")?.focus();
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [mobileMenu]);
+
   async function loadLedger() {
+    if (actionLock.current || loading) return;
     setLoading(true);
     setError("");
     setNotice("");
     try {
-      const response = await fetch("/api/dashboard", { cache: "no-store" });
-      const snapshot = await response.json();
-      if (!response.ok)
-        throw new Error(snapshot.error ?? "Could not load the ledger.");
+      const snapshot = await readDashboard();
       setData(snapshot);
       setDemo(false);
+      setQuery("");
+      setStatus("all");
       setSelected(null);
-      setNotice(
-        "Connected to the local ledger. Payment actions are read-only until the backend is connected.",
-      );
+      try {
+        await connectMaintainer();
+        setMaintainerReady(true);
+        setNotice("Connected to the local ledger. Maintainer controls are ready.");
+      } catch (err) {
+        setMaintainerReady(false);
+        setError(err instanceof Error ? err.message : "Could not connect maintainer controls.");
+        setNotice("Ledger connected. Maintainer controls are unavailable.");
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not load the ledger.",
@@ -140,8 +165,12 @@ export default function Dashboard() {
   }
 
   function resetDemo() {
+    if (actionLock.current || loading) return;
+    setMaintainerReady(false);
     setData(createDemoSnapshot());
     setDemo(true);
+    setQuery("");
+    setStatus("all");
     setError("");
     setSelected(null);
     setNotice(
@@ -149,12 +178,19 @@ export default function Dashboard() {
     );
   }
 
-  function approve(id: string) {
+  async function approve(id: string) {
     const row = rows.find((item) => item.id === id);
-    if (!demo || !row || row.status !== "awaiting_approval") return;
+    if (actionLock.current || !row || row.status !== "awaiting_approval") return;
     const blocker = approvalBlocker(row, data.settings.paused);
     if (blocker) {
       setError(blocker);
+      return;
+    }
+    if (!demo) {
+      await liveAction(
+        () => decideBounty(id, "approve"),
+        "Approval recorded. Check the payout status below; approval alone does not confirm payment.",
+      );
       return;
     }
     const now = new Date().toISOString();
@@ -197,6 +233,85 @@ export default function Dashboard() {
     setSelected(null);
   }
 
+  async function liveAction(action: () => Promise<unknown>, message: string) {
+    if (actionLock.current || loading) return;
+    if (!maintainerReady) {
+      setError("Connect the ledger to enable maintainer controls.");
+      return;
+    }
+    actionLock.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      await connectMaintainer();
+      await action();
+      setNotice(message);
+      try {
+        setData(await readDashboard());
+      } catch {
+        setError("Action recorded, but the ledger could not reload. Refresh the ledger before continuing.");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "The action failed.");
+      // reload after errors too: the server may have recorded a decision
+      try { setData(await readDashboard()); } catch { /* keep the last snapshot */ }
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
+
+  async function reject(id: string) {
+    const row = rows.find((item) => item.id === id);
+    if (actionLock.current || !row || row.status !== "awaiting_approval" || row.decision?.outcome !== "needs_approval") return;
+    if (!demo) {
+      await liveAction(() => decideBounty(id, "reject"), "Bounty rejected. No payout was created.");
+      return;
+    }
+    setData((previous) => ({
+      ...previous,
+      bounties: previous.bounties.map((bounty) => bounty.id === id ? { ...bounty, status: "rejected" } : bounty),
+      decisions: [...previous.decisions, {
+        id: `demo-reject-${id}`, bountyId: id, verdictId: row.verdict!.id,
+        outcome: "blocked", ruleFired: "Maintainer rejected (demo)", decidedBy: "maintainer",
+        createdAt: new Date().toISOString(),
+      }],
+    }));
+    setNotice("Demo bounty rejected. No money was sent.");
+  }
+
+  async function togglePause() {
+    const paused = !data.settings.paused;
+    if (!demo) {
+      await liveAction(() => pausePayouts(paused), paused ? "Payouts paused." : "Payouts resumed.");
+      return;
+    }
+    setData((previous) => ({ ...previous, settings: { ...previous.settings, paused } }));
+    setNotice(paused ? "Demo payouts paused." : "Demo payouts resumed.");
+  }
+
+  async function refreshPayments() {
+    if (actionLock.current || loading || demo) return;
+    actionLock.current = true;
+    setBusy(true);
+    setError("");
+    setNotice("");
+    try {
+      const unsettled = data.payouts.filter((payout) => ["PENDING", "UNCLAIMED", "ONHOLD"].includes(payout.status));
+      const results = await Promise.allSettled(unsettled.map((payout) => refreshPayout(payout.id)));
+      setData(await readDashboard());
+      const failed = results.find((result) => result.status === "rejected");
+      if (failed?.status === "rejected") throw failed.reason;
+      setNotice("Payout statuses refreshed from PayPal.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not refresh payout statuses.");
+    } finally {
+      actionLock.current = false;
+      setBusy(false);
+    }
+  }
+
   function exportLedger() {
     // block spreadsheet formulas in csv exports
     const cell = (value: string | number) =>
@@ -237,6 +352,9 @@ export default function Dashboard() {
     rows,
     paused: data.settings.paused,
     demo,
+    busy: busy || loading,
+    canAct: demo || maintainerReady,
+    onReject: reject,
     onReview: setSelected,
     onApprove: approve,
   };
@@ -266,7 +384,11 @@ export default function Dashboard() {
 
   return (
     <div className="bp-app">
-      <aside className={`bp-sidebar ${mobileMenu ? "is-open" : ""}`}>
+      {mobileMenu && <button className="bp-nav-backdrop" aria-label="Close navigation"
+        onClick={() => setMobileMenu(false)} />}
+      <aside id="bp-sidebar" inert={Boolean(selectedRow)} className={`bp-sidebar ${mobileMenu ? "is-open" : ""}`}>
+        <button className="bp-icon-button bp-nav-close" aria-label="Close navigation"
+          onClick={() => setMobileMenu(false)}><X size={19} /></button>
         <Link href="/" className="bp-brand">
           <span className="bp-brand-mark">
             <GitBranch size={23} />
@@ -307,12 +429,15 @@ export default function Dashboard() {
           </div>
         </div>
       </aside>
-      <div className="bp-shell">
+      <div className="bp-shell" inert={Boolean(selectedRow)}>
         <header className="bp-topbar">
           <div className="bp-breadcrumb">
             <button
               className="bp-icon-button bp-menu-toggle"
+              id="bp-menu-toggle"
               aria-label="Toggle navigation"
+              aria-expanded={mobileMenu}
+              aria-controls="bp-sidebar"
               onClick={() => setMobileMenu(!mobileMenu)}
             >
               <Menu size={19} />
@@ -359,14 +484,14 @@ export default function Dashboard() {
               <p>
                 {demo
                   ? "Sample bounties. Approvals are simulated."
-                  : "Project database · read-only"}
+                  : "Project database · live controls"}
               </p>
             </div>
             <div className="bp-banner-actions">
               <button
                 onClick={resetDemo}
                 className="bp-text-button"
-                disabled={loading}
+                disabled={loading || busy}
               >
                 <RefreshCw size={13} />
                 Reset demo
@@ -374,7 +499,7 @@ export default function Dashboard() {
               <button
                 className="bp-text-button"
                 onClick={loadLedger}
-                disabled={loading}
+                disabled={loading || busy}
               >
                 {loading ? (
                   <LoaderCircle size={13} className="bp-spin" />
@@ -385,6 +510,17 @@ export default function Dashboard() {
               </button>
             </div>
           </div>
+          {!demo && (
+            <div className="bp-maintainer-controls">
+              <span className={`bp-tag ${maintainerReady ? "success" : "warning"}`}>
+                {maintainerReady ? "Maintainer connected" : "Maintainer unavailable"}
+              </span>
+              <button className="bp-button bp-button-white" disabled={busy || loading}
+                onClick={refreshPayments}><RefreshCw size={14} /> Check payout status</button>
+              <p>Approve sends a PayPal payout; reject creates no payout.</p>
+            </div>
+          )}
+          {busy && <p role="status" className="bp-muted">Updating ledger…</p>}
           {notice && (
             <div role="status" className="bp-message">
               <Check size={16} />
@@ -504,25 +640,12 @@ export default function Dashboard() {
                   <p>
                     {demo
                       ? "Pause to hold approvals. Resume when you’re ready to process payments."
-                      : "Pause and resume controls are unavailable in read-only mode."}
+                      : "Pause new payouts or resume them when you are ready."}
                   </p>
                   <button
                     className="bp-button bp-button-white"
-                    disabled={!demo}
-                    onClick={() => {
-                      setData((previous) => ({
-                        ...previous,
-                        settings: {
-                          ...previous.settings,
-                          paused: !previous.settings.paused,
-                        },
-                      }));
-                      setNotice(
-                        data.settings.paused
-                          ? "Demo payouts resumed."
-                          : "Demo payouts paused. Approvals are held.",
-                      );
-                    }}
+                    disabled={busy || loading || (!demo && !maintainerReady)}
+                    onClick={togglePause}
                   >
                     {data.settings.paused ? (
                       <Play size={14} />
@@ -530,13 +653,13 @@ export default function Dashboard() {
                       <Pause size={14} />
                     )}
                     {data.settings.paused
-                      ? "Resume demo payouts"
-                      : "Pause demo payouts"}
+                      ? (demo ? "Resume demo payouts" : "Resume payouts")
+                      : (demo ? "Pause demo payouts" : "Pause payouts")}
                   </button>
                   <div className="bp-control-state">
                     <span className={data.settings.paused ? "paused" : ""} />
                     {data.settings.paused
-                      ? "All payouts on hold"
+                      ? "New payouts on hold"
                       : "Policy checks required"}
                   </div>
                 </section>
@@ -790,7 +913,7 @@ export default function Dashboard() {
                     [
                       "Payout status",
                       data.settings.paused ? "Paused" : "Active",
-                      "The kill switch holds all payout activity.",
+                      "Pausing prevents new payouts; submitted payouts can still settle.",
                     ],
                   ].map(([label, value, description]) => (
                     <div className="bp-policy-item" key={label}>
@@ -874,6 +997,9 @@ export default function Dashboard() {
                 <X size={19} />
               </button>
             </div>
+            {busy && <p role="status" className="bp-muted bp-small">Updating ledger…</p>}
+            {error && <div role="alert" className="bp-message bp-error">{error}</div>}
+            {notice && <div role="status" className="bp-message">{notice}</div>}
             <h2 id="bp-dialog-title">{selectedRow.title}</h2>
             <div className="bp-dialog-meta">
               <Status row={selectedRow} />
@@ -981,24 +1107,28 @@ export default function Dashboard() {
                 </a>
               )}
               {selectedRow.status === "awaiting_approval" && (
+                <button className="bp-button bp-button-white"
+                  disabled={busy || loading || (!demo && !maintainerReady) || !selectedRow.verdict || selectedRow.decision?.outcome !== "needs_approval"}
+                  onClick={() => reject(selectedRow.id)}>Reject</button>
+              )}
+              {selectedRow.status === "awaiting_approval" && (
                 <button
                   className="bp-button"
                   disabled={
-                    !demo ||
+                    busy || loading || (!demo && !maintainerReady) ||
                     Boolean(approvalBlocker(selectedRow, data.settings.paused))
                   }
                   onClick={() => approve(selectedRow.id)}
                 >
-                  Approve demo payout <ArrowRight size={14} />
+                  {demo ? "Approve demo payout" : `Approve ${money(selectedRow.amount)}`} <ArrowRight size={14} />
                 </button>
               )}
             </div>
             {selectedRow.status === "awaiting_approval" && (
               <p className="bp-muted bp-small">
-                {!demo
-                  ? "Payment approval endpoint is not connected yet."
-                  : (approvalBlocker(selectedRow, data.settings.paused) ??
-                    "Demo approval queues a simulated payout. No money is sent.")}
+                {approvalBlocker(selectedRow, data.settings.paused) ??
+                  (demo ? "Demo approval queues a simulated payout. No money is sent." :
+                    !maintainerReady ? "Reconnect the ledger to enable maintainer controls." : "Approval sends a payout. Check payout status to confirm payment.")}
               </p>
             )}
           </section>

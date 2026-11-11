@@ -130,10 +130,20 @@ Run the migrations and seed first. A connection failure is shown explicitly; sam
 is never silently presented as live data. Claim PayPal emails are excluded from the response;
 only the already-masked payout recipient is exposed.
 
-Live approval and pause controls are disabled until Kendrick's authenticated mutation
-endpoints are available. The backend must recheck CI, merge, recipient, policy caps,
-pause state, and idempotency; client-side checks are only presentation safeguards.
-An approval response must not be treated as proof of a successful PayPal payment.
+On the local demo server, **Connect ledger** establishes an HttpOnly, SameSite=Strict
+maintainer session automatically. No key entry is needed. Set `MAINTAINER_KEY` and
+`LOCAL_MAINTAINER_SESSION=true` in `.env.local`; restart the server after changes.
+Automatic sessions require localhost/127.0.0.1/::1 and matching Origin/Host headers.
+The raw key stays on the server. This local convenience is off by default and is not
+a login system for a shared deployment. Existing `x-maintainer-key` API clients still work.
+Approve/reject call `POST /api/approvals/[bountyId]`; pause/resume calls
+`PATCH /api/settings`, using the session cookie. The dashboard and AG Studio share
+these controls. Flagged work can be rejected while payouts are paused.
+Approval sends a real sandbox payout when the server is configured for sandbox.
+Use **Check payout status** to call `POST /api/payouts/[payoutId]/refresh` for unsettled
+payouts and reload the ledger. Only `SUCCESS` counts as paid. Refresh ledger alone
+reads the stored state and does not ask PayPal to settle it.
+
 
 The **Treasurer agent remains to be connected** to the team's selected model and AG Studio
 Agent Framework. There is no simulated AI chat or browser-exposed LLM key in this first slice.
