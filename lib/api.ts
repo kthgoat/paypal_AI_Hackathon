@@ -6,7 +6,9 @@
 import { NextResponse } from "next/server";
 import { ZodError } from "zod";
 
+import { PolicyDataError } from "./decisions";
 import { PayPalConfigError, PayPalError } from "./paypal/client";
+import { PayoutError, PayoutRefusedError } from "./paypal/payouts";
 
 export interface ApiErrorBody {
   error: {
@@ -16,6 +18,8 @@ export interface ApiErrorBody {
     debugId?: string | null;
     /** PayPal's issue codes, e.g. ORDER_NOT_APPROVED or INSTRUMENT_DECLINED. */
     paypalIssues?: string[];
+    /** The policy rule or payout refusal reason behind the error, e.g. 'paused'. */
+    rule?: string;
   };
 }
 
@@ -23,7 +27,7 @@ export function apiError(
   status: number,
   code: string,
   message: string,
-  extra: { paypalName?: string; debugId?: string | null; paypalIssues?: string[] } = {},
+  extra: { paypalName?: string; debugId?: string | null; paypalIssues?: string[]; rule?: string } = {},
 ): NextResponse<ApiErrorBody> {
   return NextResponse.json({ error: { code, message, ...extra } }, { status });
 }
@@ -51,6 +55,18 @@ export function handleRouteError(err: unknown): NextResponse<ApiErrorBody> {
   if (err instanceof PayPalConfigError) {
     console.error("[paypal] configuration error:", err.message);
     return apiError(500, "PAYPAL_NOT_CONFIGURED", err.message);
+  }
+  if (err instanceof PayoutRefusedError) {
+    return apiError(409, "PAYOUT_REFUSED", err.message, { rule: err.reason });
+  }
+  if (err instanceof PayoutError) {
+    // OUTCOME_UNKNOWN: the request may not have reached PayPal. NEEDS_RECONCILIATION: a person must look.
+    return apiError(err.code === "PAYOUT_OUTCOME_UNKNOWN" ? 502 : 409, err.code, err.message);
+  }
+  if (err instanceof PolicyDataError) {
+    return err.code === "SETTINGS_MISSING"
+      ? apiError(503, err.code, err.message)
+      : apiError(404, err.code, err.message);
   }
   console.error("[api] unexpected error", err);
   return apiError(500, "INTERNAL_ERROR", "Unexpected error");

@@ -1,16 +1,21 @@
-// Dev helper for manually testing bounty funding. Touches ONLY the test bounty
-// test/funding-check#99 ($25); it never changes the seed or any seeded bounty.
+// Dev helper for manually testing bounty funding. Touches ONLY one test bounty; it never changes
+// the seed or any seeded bounty. By default that is test/funding-check#99 ($25). With
+// --policy-check it is test/policy-check#98 ($80, over the $50 auto-pay cap) instead.
 //
 //   npx tsx scripts/dev-funding-bounty.ts            create it if missing (status awaiting_funding), then show it
 //   npx tsx scripts/dev-funding-bounty.ts --show     just show its status and funding ids
 //   npx tsx scripts/dev-funding-bounty.ts --reset    put it back to awaiting_funding and clear its funding ids
 //                                                    (refuses if it already holds a capture id, unless --force)
+//   add --policy-check to any of the above to work on test/policy-check#98 instead
 
 // Makes this file a module, so its top-level names don't clash with other scripts (e.g. prisma/seed.ts).
 export {};
 
-const TEST_REPO = "test/funding-check";
-const TEST_ISSUE = 99;
+const POLICY_CHECK = process.argv.includes("--policy-check");
+const TEST_REPO = POLICY_CHECK ? "test/policy-check" : "test/funding-check";
+const TEST_ISSUE = POLICY_CHECK ? 98 : 99;
+const TEST_TITLE = POLICY_CHECK ? "Policy check" : "Funding check";
+const TEST_AMOUNT_USD = POLICY_CHECK ? 80 : 25;
 
 async function main() {
   try {
@@ -43,8 +48,8 @@ async function main() {
         create: {
           repo: TEST_REPO,
           issueNumber: TEST_ISSUE,
-          title: "Funding check",
-          amountCents: usdToCents(25),
+          title: TEST_TITLE,
+          amountCents: usdToCents(TEST_AMOUNT_USD),
           criteria: "- Test bounty used to check PayPal funding",
           status: "awaiting_funding",
         },
