@@ -37,17 +37,18 @@ export default function ApprovalQueue({
     <div className="bp-approval-list">
       {pending.map((row) => {
         const flagged = Boolean(row.verdict?.injectionFlags.length);
+        const settling = Boolean(row.payout && ["PENDING", "UNCLAIMED", "ONHOLD"].includes(row.payout.status));
         const blocker = approvalBlocker(row, paused);
-        const reason = blocker ?? (!canAct ? "Enter your maintainer key to act." : undefined);
+        const reason = blocker ?? (!canAct ? "Reconnect the ledger to enable maintainer controls." : undefined);
         return (
           <article
             className={`bp-approval-card ${flagged ? "is-flagged" : ""}`}
             key={row.id}
           >
             <div className="bp-approval-top">
-              <span className={`bp-tag ${flagged ? "danger" : "warning"}`}>
+              <span className={`bp-tag ${settling ? "blue" : flagged ? "danger" : "warning"}`}>
                 {flagged && <ShieldAlert size={13} />}
-                {flagged ? "Security review" : "Approval required"}
+                {settling ? "Payout pending" : flagged ? "Security review" : "Approval required"}
               </span>
               <strong>{money(row.amount)}</strong>
             </div>
@@ -72,7 +73,7 @@ export default function ApprovalQueue({
                 disabled={busy || !canAct || Boolean(blocker)}
                 aria-describedby={reason ? `approval-reason-${row.id}` : undefined}
                 title={reason} onClick={() => onApprove(row.id)}>
-                {flagged ? "Held for review" : demo ? "Approve demo" : "Approve"}
+                {settling ? "Payout pending" : flagged ? "Held for review" : demo ? "Approve demo" : "Approve"}
                 {!flagged && <Check size={14} />}
               </button>
             </div>

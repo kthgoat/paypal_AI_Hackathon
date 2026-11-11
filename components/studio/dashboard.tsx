@@ -44,7 +44,7 @@ import {
   type LedgerRow,
 } from "@/lib/dashboard";
 import ApprovalQueue from "./approval-queue";
-import { decideBounty, pausePayouts, readDashboard, refreshPayout } from "@/lib/dashboard-client";
+import { connectMaintainer, decideBounty, pausePayouts, readDashboard, refreshPayout } from "@/lib/dashboard-client";
 
 const AnalyticsStudio = dynamic(() => import("./analytics-studio"), {
   ssr: false,
@@ -75,7 +75,7 @@ export default function Dashboard() {
   const [notice, setNotice] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  const [maintainerKey, setMaintainerKey] = useState("");
+  const [maintainerReady, setMaintainerReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const actionLock = useRef(false);
   const [selected, setSelected] = useState<string | null>(null);
@@ -91,6 +91,8 @@ export default function Dashboard() {
   useEffect(() => {
     if (!selected) return;
     const previous = document.activeElement as HTMLElement | null;
+    const previousOverflow = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
     document.getElementById("bp-dialog-close")?.focus();
     const onKey = (event: KeyboardEvent) => {
       if (event.key === "Escape") setSelected(null);
@@ -115,9 +117,22 @@ export default function Dashboard() {
     document.addEventListener("keydown", onKey);
     return () => {
       document.removeEventListener("keydown", onKey);
+      document.body.style.overflow = previousOverflow;
       previous?.focus();
     };
   }, [selected]);
+
+  useEffect(() => {
+    if (!mobileMenu) return;
+    const closeOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setMobileMenu(false);
+        document.getElementById("bp-menu-toggle")?.focus();
+      }
+    };
+    document.addEventListener("keydown", closeOnEscape);
+    return () => document.removeEventListener("keydown", closeOnEscape);
+  }, [mobileMenu]);
 
   async function loadLedger() {
     if (actionLock.current || loading) return;
@@ -128,10 +143,18 @@ export default function Dashboard() {
       const snapshot = await readDashboard();
       setData(snapshot);
       setDemo(false);
+      setQuery("");
+      setStatus("all");
       setSelected(null);
-      setNotice(
-        "Connected to the local ledger. Enter your maintainer key to approve, reject, or pause payouts.",
-      );
+      try {
+        await connectMaintainer();
+        setMaintainerReady(true);
+        setNotice("Connected to the local ledger. Maintainer controls are ready.");
+      } catch (err) {
+        setMaintainerReady(false);
+        setError(err instanceof Error ? err.message : "Could not connect maintainer controls.");
+        setNotice("Ledger connected. Maintainer controls are unavailable.");
+      }
     } catch (err) {
       setError(
         err instanceof Error ? err.message : "Could not load the ledger.",
@@ -143,9 +166,11 @@ export default function Dashboard() {
 
   function resetDemo() {
     if (actionLock.current || loading) return;
-    setMaintainerKey("");
+    setMaintainerReady(false);
     setData(createDemoSnapshot());
     setDemo(true);
+    setQuery("");
+    setStatus("all");
     setError("");
     setSelected(null);
     setNotice(
@@ -163,7 +188,7 @@ export default function Dashboard() {
     }
     if (!demo) {
       await liveAction(
-        () => decideBounty(id, "approve", maintainerKey),
+        () => decideBounty(id, "approve"),
         "Approval recorded. Check the payout status below; approval alone does not confirm payment.",
       );
       return;
@@ -210,8 +235,8 @@ export default function Dashboard() {
 
   async function liveAction(action: () => Promise<unknown>, message: string) {
     if (actionLock.current || loading) return;
-    if (!maintainerKey) {
-      setError("Enter your maintainer key first.");
+    if (!maintainerReady) {
+      setError("Connect the ledger to enable maintainer controls.");
       return;
     }
     actionLock.current = true;
@@ -219,6 +244,7 @@ export default function Dashboard() {
     setError("");
     setNotice("");
     try {
+      await connectMaintainer();
       await action();
       setNotice(message);
       try {
@@ -240,7 +266,7 @@ export default function Dashboard() {
     const row = rows.find((item) => item.id === id);
     if (actionLock.current || !row || row.status !== "awaiting_approval" || row.decision?.outcome !== "needs_approval") return;
     if (!demo) {
-      await liveAction(() => decideBounty(id, "reject", maintainerKey), "Bounty rejected. No payout was created.");
+      await liveAction(() => decideBounty(id, "reject"), "Bounty rejected. No payout was created.");
       return;
     }
     setData((previous) => ({
@@ -258,7 +284,7 @@ export default function Dashboard() {
   async function togglePause() {
     const paused = !data.settings.paused;
     if (!demo) {
-      await liveAction(() => pausePayouts(paused, maintainerKey), paused ? "Payouts paused." : "Payouts resumed.");
+      await liveAction(() => pausePayouts(paused), paused ? "Payouts paused." : "Payouts resumed.");
       return;
     }
     setData((previous) => ({ ...previous, settings: { ...previous.settings, paused } }));
@@ -327,7 +353,7 @@ export default function Dashboard() {
     paused: data.settings.paused,
     demo,
     busy: busy || loading,
-    canAct: demo || Boolean(maintainerKey),
+    canAct: demo || maintainerReady,
     onReject: reject,
     onReview: setSelected,
     onApprove: approve,
@@ -358,7 +384,11 @@ export default function Dashboard() {
 
   return (
     <div className="bp-app">
-      <aside className={`bp-sidebar ${mobileMenu ? "is-open" : ""}`}>
+      {mobileMenu && <button className="bp-nav-backdrop" aria-label="Close navigation"
+        onClick={() => setMobileMenu(false)} />}
+      <aside id="bp-sidebar" inert={Boolean(selectedRow)} className={`bp-sidebar ${mobileMenu ? "is-open" : ""}`}>
+        <button className="bp-icon-button bp-nav-close" aria-label="Close navigation"
+          onClick={() => setMobileMenu(false)}><X size={19} /></button>
         <Link href="/" className="bp-brand">
           <span className="bp-brand-mark">
             <GitBranch size={23} />
@@ -399,12 +429,15 @@ export default function Dashboard() {
           </div>
         </div>
       </aside>
-      <div className="bp-shell">
+      <div className="bp-shell" inert={Boolean(selectedRow)}>
         <header className="bp-topbar">
           <div className="bp-breadcrumb">
             <button
               className="bp-icon-button bp-menu-toggle"
+              id="bp-menu-toggle"
               aria-label="Toggle navigation"
+              aria-expanded={mobileMenu}
+              aria-controls="bp-sidebar"
               onClick={() => setMobileMenu(!mobileMenu)}
             >
               <Menu size={19} />
@@ -479,16 +512,12 @@ export default function Dashboard() {
           </div>
           {!demo && (
             <div className="bp-maintainer-controls">
-              <label htmlFor="bp-maintainer-key">Maintainer key</label>
-              <input id="bp-maintainer-key" type="password" autoComplete="off"
-                value={maintainerKey} disabled={busy || loading}
-                onChange={(event) => setMaintainerKey(event.target.value)}
-                placeholder="Enter the server maintainer key" />
-              <button className="bp-text-button" disabled={!maintainerKey || busy || loading}
-                onClick={() => setMaintainerKey("")}>Clear key</button>
+              <span className={`bp-tag ${maintainerReady ? "success" : "warning"}`}>
+                {maintainerReady ? "Maintainer connected" : "Maintainer unavailable"}
+              </span>
               <button className="bp-button bp-button-white" disabled={busy || loading}
                 onClick={refreshPayments}><RefreshCw size={14} /> Check payout status</button>
-              <p>The key stays in memory for this page. Approve sends a PayPal payout; reject creates no payout.</p>
+              <p>Approve sends a PayPal payout; reject creates no payout.</p>
             </div>
           )}
           {busy && <p role="status" className="bp-muted">Updating ledger…</p>}
@@ -611,11 +640,11 @@ export default function Dashboard() {
                   <p>
                     {demo
                       ? "Pause to hold approvals. Resume when you’re ready to process payments."
-                      : "Pause new payouts or resume them using your maintainer key."}
+                      : "Pause new payouts or resume them when you are ready."}
                   </p>
                   <button
                     className="bp-button bp-button-white"
-                    disabled={busy || loading || (!demo && !maintainerKey)}
+                    disabled={busy || loading || (!demo && !maintainerReady)}
                     onClick={togglePause}
                   >
                     {data.settings.paused ? (
@@ -968,6 +997,9 @@ export default function Dashboard() {
                 <X size={19} />
               </button>
             </div>
+            {busy && <p role="status" className="bp-muted bp-small">Updating ledger…</p>}
+            {error && <div role="alert" className="bp-message bp-error">{error}</div>}
+            {notice && <div role="status" className="bp-message">{notice}</div>}
             <h2 id="bp-dialog-title">{selectedRow.title}</h2>
             <div className="bp-dialog-meta">
               <Status row={selectedRow} />
@@ -1076,14 +1108,14 @@ export default function Dashboard() {
               )}
               {selectedRow.status === "awaiting_approval" && (
                 <button className="bp-button bp-button-white"
-                  disabled={busy || loading || (!demo && !maintainerKey) || !selectedRow.verdict || selectedRow.decision?.outcome !== "needs_approval"}
+                  disabled={busy || loading || (!demo && !maintainerReady) || !selectedRow.verdict || selectedRow.decision?.outcome !== "needs_approval"}
                   onClick={() => reject(selectedRow.id)}>Reject</button>
               )}
               {selectedRow.status === "awaiting_approval" && (
                 <button
                   className="bp-button"
                   disabled={
-                    busy || loading || (!demo && !maintainerKey) ||
+                    busy || loading || (!demo && !maintainerReady) ||
                     Boolean(approvalBlocker(selectedRow, data.settings.paused))
                   }
                   onClick={() => approve(selectedRow.id)}
@@ -1096,7 +1128,7 @@ export default function Dashboard() {
               <p className="bp-muted bp-small">
                 {approvalBlocker(selectedRow, data.settings.paused) ??
                   (demo ? "Demo approval queues a simulated payout. No money is sent." :
-                    !maintainerKey ? "Enter your maintainer key to act." : "Approval sends a payout. Check payout status to confirm payment.")}
+                    !maintainerReady ? "Reconnect the ledger to enable maintainer controls." : "Approval sends a payout. Check payout status to confirm payment.")}
               </p>
             )}
           </section>

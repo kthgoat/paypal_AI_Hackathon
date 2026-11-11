@@ -130,11 +130,15 @@ Run the migrations and seed first. A connection failure is shown explicitly; sam
 is never silently presented as live data. Claim PayPal emails are excluded from the response;
 only the already-masked payout recipient is exposed.
 
-Live controls call the authenticated backend routes. Connect ledger, then enter the
-server's `MAINTAINER_KEY` in the password field (kept only in page memory; never stored).
+On the local demo server, **Connect ledger** establishes an HttpOnly, SameSite=Strict
+maintainer session automatically. No key entry is needed. Set `MAINTAINER_KEY` and
+`LOCAL_MAINTAINER_SESSION=true` in `.env.local`; restart the server after changes.
+Automatic sessions require localhost/127.0.0.1/::1 and matching Origin/Host headers.
+The raw key stays on the server. This local convenience is off by default and is not
+a login system for a shared deployment. Existing `x-maintainer-key` API clients still work.
 Approve/reject call `POST /api/approvals/[bountyId]`; pause/resume calls
-`PATCH /api/settings`. Both send `x-maintainer-key`. These controls are shared with
-the AG Studio approval widget. Flagged work can be rejected while payouts are paused.
+`PATCH /api/settings`, using the session cookie. The dashboard and AG Studio share
+these controls. Flagged work can be rejected while payouts are paused.
 Approval sends a real sandbox payout when the server is configured for sandbox.
 Use **Check payout status** to call `POST /api/payouts/[payoutId]/refresh` for unsettled
 payouts and reload the ledger. Only `SUCCESS` counts as paid. Refresh ledger alone

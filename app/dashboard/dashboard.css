@@ -658,7 +658,7 @@
 .bp-approval-card.is-flagged {
   border-color: #ead6ce;
 }
-.bp-approval-card.is-flagged .bp-button {
+.bp-approval-card.is-flagged .bp-button:disabled {
   background: #f5f5f5;
   border-color: #dfe3e8;
   color: #656d76;
@@ -1215,12 +1215,14 @@
 }
 @media (max-width: 640px) {
   .bp-sidebar {
+    display: none;
     transform: translateX(-100%);
     transition: transform 0.2s;
     width: 230px;
     box-shadow: 10px 0 30px #20332e12;
   }
   .bp-sidebar.is-open {
+    display: flex;
     transform: translateX(0);
   }
   .bp-shell {
@@ -1398,3 +1400,27 @@
   color: #57606a;
 }
 .bp-approval-bottom, .bp-dialog-actions { flex-wrap: wrap; }
+
+.bp-nav-close, .bp-nav-backdrop { display: none; }
+.bp-main, .bp-overview-row > *, .bp-approval-card, .bp-dialog > *,
+.bp-studio-note > div, .bp-payout-receipt > div { min-width: 0; }
+.bp-approval-card h3, .bp-approval-summary, .bp-approval-reason,
+.bp-dialog h2, .bp-dialog > p, .bp-payout-receipt p, .bp-message {
+  overflow-wrap: anywhere;
+}
+.bp-approval-bottom { gap: 10px; }
+.bp-approval-bottom .bp-text-button { min-height: 32px; }
+.bp-approval-bottom .bp-button { min-height: 34px; }
+.bp-message > svg, .bp-message > button { flex-shrink: 0; }
+.bp-dialog .bp-message { margin-top: 12px; }
+.bp-studio-approval { scrollbar-gutter: stable; }
+.bp-status-filter:focus-within { outline: 2px solid #6b8baa; outline-offset: 2px; }
+@media (max-width: 640px) {
+  .bp-nav-close { display: inline-flex; position: absolute; top: 12px; right: 8px; }
+  .bp-nav-backdrop { display: block; position: fixed; inset: 0; z-index: 29;
+    border: 0; background: #24292f66; }
+  .bp-sidebar .bp-brand { font-size: 20px; padding-right: 20px; }
+  .bp-maintainer-controls input { width: 100%; min-width: 0; }
+  .bp-dialog-actions { justify-content: flex-start; }
+  .bp-dialog-actions > .bp-text-button { width: 100%; min-height: 32px; }
+}

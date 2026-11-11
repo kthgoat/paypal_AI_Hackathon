@@ -1,17 +1,17 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { decideBounty, pausePayouts, readDashboard, refreshPayout } from "./dashboard-client";
+import { connectMaintainer, decideBounty, pausePayouts, readDashboard, refreshPayout } from "./dashboard-client";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("live dashboard requests", () => {
-  it("sends approval and rejection with the maintainer header and encoded bounty id", async () => {
+  it("sends approval and rejection without exposing the server key", async () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({ decision: {}, payout: { status: "PENDING" } }));
     vi.stubGlobal("fetch", fetch);
     for (const action of ["approve", "reject"] as const) {
-      await decideBounty("bounty/one", action, "test-maintainer-key");
+      await decideBounty("bounty/one", action);
       expect(fetch).toHaveBeenLastCalledWith("/api/approvals/bounty%2Fone", {
         cache: "no-store", method: "POST",
-        headers: { "Content-Type": "application/json", "x-maintainer-key": "test-maintainer-key" },
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ action }),
       });
     }
@@ -21,9 +21,9 @@ describe("live dashboard requests", () => {
     const fetch = vi.fn().mockResolvedValue(Response.json({}));
     vi.stubGlobal("fetch", fetch);
     for (const paused of [true, false]) {
-      await pausePayouts(paused, "key");
+      await pausePayouts(paused);
       expect(fetch).toHaveBeenLastCalledWith("/api/settings", expect.objectContaining({
-        method: "PATCH", headers: { "Content-Type": "application/json", "x-maintainer-key": "key" },
+        method: "PATCH", headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ paused }),
       }));
     }
@@ -47,11 +47,18 @@ describe("live dashboard requests", () => {
     [503, { error: "Ledger is not initialized" }, "Ledger is not initialized"],
   ])("surfaces a %i backend error", async (status, body, message) => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(Response.json(body, { status })));
-    await expect(decideBounty("one", "approve", "key")).rejects.toThrow(message);
+    await expect(decideBounty("one", "approve")).rejects.toThrow(message);
   });
 
   it("reports non-json server errors", async () => {
     vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response("Unavailable", { status: 502 })));
     await expect(readDashboard()).rejects.toThrow("Request failed (502)");
   });
+});
+
+it("establishes an http-only session without sending a secret from the browser", async () => {
+  const fetch = vi.fn().mockResolvedValue(Response.json({ connected: true }));
+  vi.stubGlobal("fetch", fetch);
+  await expect(connectMaintainer()).resolves.toEqual({ connected: true });
+  expect(fetch).toHaveBeenCalledWith("/api/maintainer/session", { cache: "no-store", method: "POST" });
 });

@@ -17,7 +17,7 @@ function buttons(overrides: Partial<ApprovalQueueProps> = {}) {
 }
 
 describe("approval controls", () => {
-  it("enables live approve and reject when a maintainer key is entered", () => {
+  it("enables live approve and reject when the maintainer session is ready", () => {
     expect(buttons()).toEqual(expect.arrayContaining([
       { text: "Approve", disabled: false }, { text: "Reject", disabled: false },
     ]));
@@ -37,5 +37,18 @@ describe("approval controls", () => {
     const row = ledgerRows(createDemoSnapshot())[1];
     row.decision = { ...row.decision!, outcome: "auto_pay", decidedBy: "maintainer" };
     expect(buttons({ rows: [row] })).toContainEqual({ text: "Reject", disabled: true });
+  });
+});
+
+describe("approval widget feedback", () => {
+  it("shows settlement as pending instead of asking for another approval", () => {
+    const data = createDemoSnapshot();
+    const row = ledgerRows(data)[1];
+    row.decision = { ...row.decision!, outcome: "auto_pay", decidedBy: "maintainer" };
+    row.payout = { ...data.payouts[0], bountyId: row.id, status: "PENDING" };
+    const result = buttons({ rows: [row] });
+    expect(result).toContainEqual({ text: "Payout pending", disabled: true });
+    expect(result).toContainEqual({ text: "Reject", disabled: true });
+    expect(result.some((button) => button.text === "Approve")).toBe(false);
   });
 });

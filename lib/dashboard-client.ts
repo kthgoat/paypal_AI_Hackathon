@@ -15,22 +15,26 @@ export async function dashboardRequest<T>(url: string, init?: RequestInit): Prom
 
 export const readDashboard = () => dashboardRequest<DashboardSnapshot>("/api/dashboard");
 
-export function decideBounty(id: string, action: "approve" | "reject", key: string) {
+export function decideBounty(id: string, action: "approve" | "reject") {
   return dashboardRequest(`/api/approvals/${encodeURIComponent(id)}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "x-maintainer-key": key },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ action }),
   });
 }
 
-export function pausePayouts(paused: boolean, key: string) {
+export function pausePayouts(paused: boolean) {
   return dashboardRequest("/api/settings", {
     method: "PATCH",
-    headers: { "Content-Type": "application/json", "x-maintainer-key": key },
+    headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ paused }),
   });
 }
 
 export function refreshPayout(id: string) {
   return dashboardRequest(`/api/payouts/${encodeURIComponent(id)}/refresh`, { method: "POST" });
+}
+
+export function connectMaintainer() {
+  return dashboardRequest<{ connected: boolean }>("/api/maintainer/session", { method: "POST" });
 }
