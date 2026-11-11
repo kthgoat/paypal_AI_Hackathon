@@ -40,6 +40,8 @@ export class PayPalError extends Error {
   /** PayPal's `debug_id`: quote it when contacting PayPal support. */
   readonly debugId: string | null;
   readonly details: PayPalErrorDetail[];
+  /** HATEOAS links in the error body. A duplicate-payout error links to the original batch. */
+  readonly links: PayPalErrorLink[];
 
   constructor(init: {
     status: number;
@@ -47,6 +49,7 @@ export class PayPalError extends Error {
     message: string;
     debugId: string | null;
     details: PayPalErrorDetail[];
+    links?: PayPalErrorLink[];
   }) {
     super(init.message);
     this.name = "PayPalError";
@@ -54,7 +57,14 @@ export class PayPalError extends Error {
     this.paypalName = init.name;
     this.debugId = init.debugId;
     this.details = init.details;
+    this.links = init.links ?? [];
   }
+}
+
+export interface PayPalErrorLink {
+  href: string;
+  rel?: string;
+  method?: string;
 }
 
 const asString = (v: unknown): string | null => (typeof v === "string" && v ? v : null);
@@ -71,6 +81,12 @@ function toPayPalError(res: Response, data: unknown): PayPalError {
       `PayPal request failed with HTTP ${res.status}`,
     debugId: asString(d.debug_id) ?? res.headers.get("paypal-debug-id"),
     details: Array.isArray(d.details) ? (d.details as PayPalErrorDetail[]) : [],
+    links: Array.isArray(d.links)
+      ? (d.links as unknown[]).filter(
+          (l): l is PayPalErrorLink =>
+            typeof l === "object" && l !== null && typeof (l as PayPalErrorLink).href === "string",
+        )
+      : [],
   });
 }
 
@@ -94,6 +110,15 @@ function assertSandbox(): void {
       "PAYPAL_ENVIRONMENT must be SANDBOX. This app only talks to the PayPal sandbox.",
     );
   }
+}
+
+/**
+ * Throws PayPalConfigError unless the environment is SANDBOX with credentials set.
+ * No network call. Lets callers fail before they write anything to the database.
+ */
+export function assertPayPalConfig(): void {
+  assertSandbox();
+  readCredentials();
 }
 
 function readCredentials(): { clientId: string; clientSecret: string } {
