@@ -18,7 +18,9 @@ import {
   toSettings,
   toVerdict,
 } from "../db";
+import { isUniqueViolation } from "../db-errors";
 import type { Payout as PayoutDbRow } from "../generated/prisma/client";
+import { FAILED_PAYOUT_STATUSES } from "../payout-status";
 import type { Bounty, BountyStatus, Claim, Decision, Payout, Settings, Verdict } from "../types";
 import { assertPayPalConfig, paypalFetch, PayPalError } from "./client";
 import { formatUsdCents } from "./orders";
@@ -67,9 +69,6 @@ const PAYABLE_BOUNTY_STATUSES: readonly BountyStatus[] = [
   "in_review",
   "awaiting_approval",
 ];
-
-/** Payout states where the money did NOT reach the contributor, so a new attempt is allowed. */
-const FAILED_PAYOUT_STATUSES: ReadonlySet<string> = new Set(["FAILED", "RETURNED", "BLOCKED"]);
 
 const emailSchema = z.email();
 
@@ -169,10 +168,6 @@ export function maskEmail(email: string): string {
 const truncate = (text: string, max: number) => Array.from(text).slice(0, max).join("").trimEnd();
 
 const BATCH_ID_PATTERN = /^[A-Za-z0-9]{1,64}$/;
-
-function isUniqueViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && (err as { code?: unknown }).code === "P2002";
-}
 
 /** A PENDING row with no PayPal batch id older than this is treated as a crashed attempt. */
 const STALE_PENDING_MS = 60_000;
