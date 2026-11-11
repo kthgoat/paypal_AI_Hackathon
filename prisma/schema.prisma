@@ -118,6 +118,15 @@ model GitHubMergeEvent {
   mergeSha   String
   receivedAt DateTime @default(now())
 
+  // Processing state, owned by lib/orchestrator.ts.
+  // status: received | processing | waiting_ci | done | skipped | failed
+  status      String    @default("received")
+  attempts    Int       @default(0)
+  lastError   String? // why it failed or was skipped (never holds secrets)
+  claimedAt   DateTime? // when a worker took it; lets a crashed run be picked up again
+  processedAt DateTime?
+  verdictId   String? // the one Verdict this event produced
+
   // Also deduplicate a replay sent with a different delivery header.
   @@unique([repo, prNumber, mergeSha])
 }
