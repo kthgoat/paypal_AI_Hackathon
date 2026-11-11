@@ -1,23 +1,42 @@
+<<<<<<< HEAD
 // Dev helper for manually testing bounty funding. Touches ONLY one test bounty; it never changes
 // the seed or any seeded bounty. By default that is test/funding-check#99 ($25). With
 // --policy-check it is test/policy-check#98 ($80, over the $50 auto-pay cap) instead.
+=======
+// Dev helper for manually testing bounty funding. Touches ONLY the test bounty
+// test/funding-check#99 ($25) by default; it never changes the seed or any seeded bounty.
+>>>>>>> origin/main
 //
 //   npx tsx scripts/dev-funding-bounty.ts            create it if missing (status awaiting_funding), then show it
 //   npx tsx scripts/dev-funding-bounty.ts --show     just show its status and funding ids
 //   npx tsx scripts/dev-funding-bounty.ts --reset    put it back to awaiting_funding and clear its funding ids
 //                                                    (refuses if it already holds a capture id, unless --force)
+<<<<<<< HEAD
 //   add --policy-check to any of the above to work on test/policy-check#98 instead
+=======
+//   npx tsx scripts/dev-funding-bounty.ts --issue=100 create a separate test bounty, preserving earlier payments
+//   npx tsx scripts/dev-funding-bounty.ts --remove-funded --issue=101
+//       remove completed standalone funding-check tests locally, then create a fresh test
+>>>>>>> origin/main
 
 // Makes this file a module, so its top-level names don't clash with other scripts (e.g. prisma/seed.ts).
 export {};
 
+<<<<<<< HEAD
 const POLICY_CHECK = process.argv.includes("--policy-check");
 const TEST_REPO = POLICY_CHECK ? "test/policy-check" : "test/funding-check";
 const TEST_ISSUE = POLICY_CHECK ? 98 : 99;
 const TEST_TITLE = POLICY_CHECK ? "Policy check" : "Funding check";
 const TEST_AMOUNT_USD = POLICY_CHECK ? 80 : 25;
+=======
+const TEST_REPO = "test/funding-check";
+const TEST_ISSUE = Number(process.argv.find((arg) => arg.startsWith("--issue="))?.slice("--issue=".length) ?? 99);
+>>>>>>> origin/main
 
 async function main() {
+  if (!Number.isSafeInteger(TEST_ISSUE) || TEST_ISSUE <= 0) {
+    throw new Error("--issue must be a positive integer, for example --issue=100");
+  }
   try {
     process.loadEnvFile(".env.local");
   } catch {
@@ -27,6 +46,20 @@ async function main() {
   const key = { repo_issueNumber: { repo: TEST_REPO, issueNumber: TEST_ISSUE } };
 
   try {
+    if (process.argv.includes("--remove-funded")) {
+      const removed = await prisma.bounty.deleteMany({
+        where: {
+          repo: TEST_REPO,
+          status: "open",
+          fundingCaptureId: { not: null },
+          claim: { is: null },
+          verdicts: { none: {} },
+          decisions: { none: {} },
+          payouts: { none: {} },
+        },
+      });
+      console.log(`Removed ${removed.count} funded funding-check tests from the local database.`);
+    }
     if (process.argv.includes("--reset")) {
       const existing = await prisma.bounty.findUnique({ where: key });
       if (existing?.fundingCaptureId && !process.argv.includes("--force")) {
@@ -48,8 +81,13 @@ async function main() {
         create: {
           repo: TEST_REPO,
           issueNumber: TEST_ISSUE,
+<<<<<<< HEAD
           title: TEST_TITLE,
           amountCents: usdToCents(TEST_AMOUNT_USD),
+=======
+          title: TEST_ISSUE === 99 ? "Funding check" : `Funding check #${TEST_ISSUE}`,
+          amountCents: usdToCents(25),
+>>>>>>> origin/main
           criteria: "- Test bounty used to check PayPal funding",
           status: "awaiting_funding",
         },
