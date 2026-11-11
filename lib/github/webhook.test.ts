@@ -6,6 +6,10 @@ import { Prisma } from "../generated/prisma/client";
 import { verifyWebhookSignature } from "./webhook";
 
 vi.mock("../db", () => ({ prisma: { gitHubMergeEvent: { create: vi.fn() } } }));
+// The route now schedules processing with after(), which only works inside a Next request.
+// What it schedules is tested in app/api/github/webhook/route.test.ts.
+vi.mock("../orchestrator", () => ({ processMergeEvent: vi.fn() }));
+vi.mock("next/server", async (importOriginal) => ({ ...(await importOriginal<typeof import("next/server")>()), after: vi.fn() }));
 
 const secret = "test-webhook-secret";
 const payload = {

@@ -1,7 +1,12 @@
 import { apiError, handleRouteError } from "../../../../lib/api";
 import { prisma } from "../../../../lib/db";
+import { after } from "next/server";
 import { Prisma } from "../../../../lib/generated/prisma/client";
+import { processMergeEvent } from "../../../../lib/orchestrator";
 import { mergedPullRequestSchema, pullRequestEventSchema, verifyWebhookSignature } from "../../../../lib/github/webhook";
+
+// The work scheduled with after() below can take a while (a review, then watching a payout).
+export const maxDuration = 120;
 
 export async function POST(request: Request) {
   const secret = process.env.GITHUB_WEBHOOK_SECRET;
@@ -51,6 +56,16 @@ export async function POST(request: Request) {
       throw error;
     }
     console.info("[github] Merged PR recorded", { deliveryId, repo: data.repo, prNumber: data.prNumber });
+    // Review, decide and (only if policy says auto_pay) pay AFTER GitHub has its 201, so the
+    // delivery never waits on GitHub, the model or PayPal. If this is lost (a restart), the event
+    // stays 'received' and POST /api/github/process picks it up.
+    after(async () => {
+      try {
+        await processMergeEvent(deliveryId);
+      } catch (error) {
+        console.error("[github] Could not process merged PR", { deliveryId, reason: error instanceof Error ? error.name : "unknown" });
+      }
+    });
     return Response.json({ status: "received", deliveryId }, { status: 201 });
   } catch (error) {
     return handleRouteError(error);
