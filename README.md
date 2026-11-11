@@ -130,10 +130,16 @@ Run the migrations and seed first. A connection failure is shown explicitly; sam
 is never silently presented as live data. Claim PayPal emails are excluded from the response;
 only the already-masked payout recipient is exposed.
 
-Live approval and pause controls are disabled until Kendrick's authenticated mutation
-endpoints are available. The backend must recheck CI, merge, recipient, policy caps,
-pause state, and idempotency; client-side checks are only presentation safeguards.
-An approval response must not be treated as proof of a successful PayPal payment.
+Live controls call the authenticated backend routes. Connect ledger, then enter the
+server's `MAINTAINER_KEY` in the password field (kept only in page memory; never stored).
+Approve/reject call `POST /api/approvals/[bountyId]`; pause/resume calls
+`PATCH /api/settings`. Both send `x-maintainer-key`. These controls are shared with
+the AG Studio approval widget. Flagged work can be rejected while payouts are paused.
+Approval sends a real sandbox payout when the server is configured for sandbox.
+Use **Check payout status** to call `POST /api/payouts/[payoutId]/refresh` for unsettled
+payouts and reload the ledger. Only `SUCCESS` counts as paid. Refresh ledger alone
+reads the stored state and does not ask PayPal to settle it.
+
 
 The **Treasurer agent remains to be connected** to the team's selected model and AG Studio
 Agent Framework. There is no simulated AI chat or browser-exposed LLM key in this first slice.

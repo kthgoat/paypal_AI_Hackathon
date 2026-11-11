@@ -1376,3 +1376,25 @@
 .bp-metric:last-child { border-right: 0; }
 .bp-approval-reason { margin-top: 10px !important; color: #656d76; font-size: 12px; line-height: 1.5; }
 @media (max-width:900px) { .bp-metric:nth-child(2) { border-right: 0; } .bp-metric:nth-child(-n+2) { border-bottom: 1px solid var(--bp-border); } }
+
+.bp-maintainer-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 16px 0;
+  font-size: 13px;
+}
+.bp-maintainer-controls input {
+  min-width: 220px;
+  max-width: 100%;
+  padding: 9px 12px;
+  border: 1px solid #dfe3e8;
+  border-radius: 6px;
+}
+.bp-maintainer-controls p {
+  width: 100%;
+  margin: 0;
+  color: #57606a;
+}
+.bp-approval-bottom, .bp-dialog-actions { flex-wrap: wrap; }

@@ -7,6 +7,9 @@ export interface ApprovalQueueProps {
   rows: LedgerRow[];
   paused: boolean;
   demo: boolean;
+  busy: boolean;
+  canAct: boolean;
+  onReject: (id: string) => void;
   onReview: (id: string) => void;
   onApprove: (id: string) => void;
 }
@@ -15,6 +18,9 @@ export default function ApprovalQueue({
   rows,
   paused,
   demo,
+  busy,
+  canAct,
+  onReject,
   onReview,
   onApprove,
 }: ApprovalQueueProps) {
@@ -32,6 +38,7 @@ export default function ApprovalQueue({
       {pending.map((row) => {
         const flagged = Boolean(row.verdict?.injectionFlags.length);
         const blocker = approvalBlocker(row, paused);
+        const reason = blocker ?? (!canAct ? "Enter your maintainer key to act." : undefined);
         return (
           <article
             className={`bp-approval-card ${flagged ? "is-flagged" : ""}`}
@@ -58,22 +65,18 @@ export default function ApprovalQueue({
               >
                 Review verdict <ArrowUpRight size={14} />
               </button>
-              <button
-                className="bp-button bp-button-small"
-                disabled={!demo || Boolean(blocker)}
-                aria-describedby={!demo || blocker ? `approval-reason-${row.id}` : undefined}
-                title={
-                  !demo
-                    ? "Payment approval endpoint is not connected yet."
-                    : blocker
-                }
-                onClick={() => onApprove(row.id)}
-              >
-                {flagged ? "Held for review" : "Approve"}
+              <button className="bp-button bp-button-white bp-button-small"
+                disabled={busy || !canAct || !row.verdict || row.decision?.outcome !== "needs_approval"}
+                onClick={() => onReject(row.id)}>Reject</button>
+              <button className="bp-button bp-button-small"
+                disabled={busy || !canAct || Boolean(blocker)}
+                aria-describedby={reason ? `approval-reason-${row.id}` : undefined}
+                title={reason} onClick={() => onApprove(row.id)}>
+                {flagged ? "Held for review" : demo ? "Approve demo" : "Approve"}
                 {!flagged && <Check size={14} />}
               </button>
             </div>
-            {(!demo || blocker) && <p id={`approval-reason-${row.id}`} className="bp-approval-reason">{!demo ? "Read-only mode. Select Reset demo to try approvals." : blocker}</p>}
+            {reason && <p id={`approval-reason-${row.id}`} className="bp-approval-reason">{reason}</p>}
           </article>
         );
       })}
