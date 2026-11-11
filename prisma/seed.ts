@@ -3,9 +3,9 @@
 // Idempotent: every write is an upsert with an empty `update`, so running it
 // twice changes nothing, and it never overwrites edits made through the app.
 
-// PLACEHOLDER: set this to the GitHub user/org that owns the demo repo.
-// (Changing it later creates new bounty rows: the upsert key includes the repo.)
-const DEMO_OWNER = "TBD-OWNER";
+// The GitHub user/org that owns the demo repo.
+// (Changing it creates new bounty rows: the upsert key includes the repo.)
+const DEMO_OWNER = "kthgoat";
 const DEMO_REPO = `${DEMO_OWNER}/bountypilot-demo`;
 
 const DEMO_BOUNTIES = [
