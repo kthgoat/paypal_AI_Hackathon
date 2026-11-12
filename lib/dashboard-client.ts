@@ -41,9 +41,17 @@ export interface SyncedEvent {
   reason?: string;
 }
 
-/** Processes every merged-PR event that is waiting (the maintainer session satisfies the key check). */
+export interface SyncResponse {
+  /** New merged-PR events found on GitHub by this call. */
+  discovered?: number;
+  /** Set when GitHub could not be checked; existing events were still processed. */
+  discoveryError?: string;
+  processed: SyncedEvent[];
+}
+
+/** Finds new merged PRs on GitHub, then processes every merged-PR event that is waiting (the maintainer session satisfies the key check). */
 export function processMergedPrs() {
-  return dashboardRequest<{ processed: SyncedEvent[] }>("/api/github/process", { method: "POST" });
+  return dashboardRequest<SyncResponse>("/api/github/process", { method: "POST" });
 }
 
 const SYNC_LABELS: Record<string, string> = {
@@ -54,13 +62,33 @@ const SYNC_LABELS: Record<string, string> = {
   busy: "already being processed",
 };
 
-/** "Processed 2 merged PR events: 1 done, 1 waiting for CI." */
-export function describeSync(processed: Pick<SyncedEvent, "status">[]): string {
-  if (processed.length === 0) return "No merged PRs are waiting to be processed.";
-  const counts = new Map<string, number>();
-  for (const { status } of processed) counts.set(status, (counts.get(status) ?? 0) + 1);
-  const parts = [...counts].map(([status, n]) => `${n} ${SYNC_LABELS[status] ?? status}`);
-  return `Processed ${processed.length} merged PR ${processed.length === 1 ? "event" : "events"}: ${parts.join(", ")}.`;
+/**
+ * "Found 1 new merged PR. Processed 1 merged PR event: 1 done."
+ * Pass the response's `discovered` / `discoveryError` to include the GitHub check in the message.
+ */
+export function describeSync(
+  processed: Pick<SyncedEvent, "status">[],
+  discovery?: Pick<SyncResponse, "discovered" | "discoveryError">,
+): string {
+  const sentences: string[] = [];
+  const discovered = discovery?.discovered ?? 0;
+
+  if (discovery?.discoveryError) sentences.push(`Could not check GitHub for merged PRs (${discovery.discoveryError}).`);
+  if (discovered > 0) sentences.push(`Found ${discovered} new merged ${discovered === 1 ? "PR" : "PRs"}.`);
+
+  if (processed.length > 0) {
+    const counts = new Map<string, number>();
+    for (const { status } of processed) counts.set(status, (counts.get(status) ?? 0) + 1);
+    const parts = [...counts].map(([status, n]) => `${n} ${SYNC_LABELS[status] ?? status}`);
+    sentences.push(`Processed ${processed.length} merged PR ${processed.length === 1 ? "event" : "events"}: ${parts.join(", ")}.`);
+  } else if (discovery?.discoveryError) {
+    sentences.push("No events were waiting to be processed.");
+  } else if (discovery) {
+    sentences.push("No new merged PRs found for open bounties, and none are waiting to be processed.");
+  } else {
+    sentences.push("No merged PRs are waiting to be processed.");
+  }
+  return sentences.join(" ");
 }
 
 export function connectMaintainer() {

@@ -335,9 +335,9 @@ export default function Dashboard() {
     setNotice("");
     try {
       await connectMaintainer();
-      const { processed } = await processMergedPrs();
+      const sync = await processMergedPrs();
       setData(await readDashboard());
-      setNotice(describeSync(processed));
+      setNotice(describeSync(sync.processed, sync));
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not sync merged PRs.");
       // reload after errors too: some events may have been processed before the failure
