@@ -24,12 +24,44 @@ describe("describeSync", () => {
   });
 });
 
+describe("describeSync with the GitHub check", () => {
+  it("reports what was found and what happened to it", () => {
+    expect(describeSync([{ status: "done" }], { discovered: 1 })).toBe("Found 1 new merged PR. Processed 1 merged PR event: 1 done.");
+  });
+
+  it("pluralises", () => {
+    expect(describeSync([{ status: "done" }, { status: "done" }], { discovered: 2 })).toBe(
+      "Found 2 new merged PRs. Processed 2 merged PR events: 2 done.",
+    );
+  });
+
+  it("says so when GitHub was checked and there is nothing new and nothing waiting", () => {
+    expect(describeSync([], { discovered: 0 })).toBe("No new merged PRs found for open bounties, and none are waiting to be processed.");
+  });
+
+  it("says GitHub could not be checked, and still reports what was processed", () => {
+    expect(describeSync([{ status: "done" }], { discovered: 0, discoveryError: "GitHub GET /repos/a/b/pulls failed with 403 (permission or rate limit)" })).toBe(
+      "Could not check GitHub for merged PRs (GitHub GET /repos/a/b/pulls failed with 403 (permission or rate limit)). Processed 1 merged PR event: 1 done.",
+    );
+  });
+
+  it("says GitHub could not be checked when nothing was waiting either", () => {
+    expect(describeSync([], { discoveryError: "GITHUB_TOKEN is not set" })).toBe(
+      "Could not check GitHub for merged PRs (GITHUB_TOKEN is not set). No events were waiting to be processed.",
+    );
+  });
+
+  it("keeps the old wording when no discovery info is passed", () => {
+    expect(describeSync([])).toBe("No merged PRs are waiting to be processed.");
+  });
+});
+
 describe("processMergedPrs", () => {
   it("POSTs to /api/github/process with no key header (the local session cookie is what authorises it)", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ processed: [{ deliveryId: "d1", status: "done" }] })));
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ discovered: 1, processed: [{ deliveryId: "d1", status: "done" }] })));
     vi.stubGlobal("fetch", fetchMock);
 
-    expect(await processMergedPrs()).toEqual({ processed: [{ deliveryId: "d1", status: "done" }] });
+    expect(await processMergedPrs()).toEqual({ discovered: 1, processed: [{ deliveryId: "d1", status: "done" }] });
 
     const [url, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     expect(url).toBe("/api/github/process");
